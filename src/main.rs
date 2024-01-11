@@ -1,3 +1,5 @@
+mod basicAUth;
+
 #[macro_use] extern crate rocket;
 
 use rocket::response::status;
