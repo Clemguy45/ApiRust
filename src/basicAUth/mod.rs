@@ -1,1 +1,1 @@
-pub mod basicAuth;
+pub mod BasicAuth;
