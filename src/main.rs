@@ -8,39 +8,67 @@ use diesel::prelude::*;
 use diesel::associations::HasTable;
 use diesel::{QueryDsl, RunQueryDsl};
 use rocket::response::status;
-use rocket::serde::json::{json, Value};
+use rocket::serde::json::{json, Json, Value};
 use rocket_sync_db_pools::database;
 use crate::basic_auth::basic_auth::BasicAuth;
+use crate::models::{NewRustacean, Rustacean};
 use crate::schema::rustaceans;
-use crate::models::Rustacean;
+
 
 #[database("sqlite")]
 struct DbConn(SqliteConnection);
 #[get("/rustaceans")]
 async fn get_rustaceans(_auth : BasicAuth, db: DbConn) -> Value {
     db.run(|c| {
-        let rustaceans = rustaceans::table.order(rustaceans::id.desc()).load::<Rustacean>(c).expect("Error loading posts");
+        let rustaceans = rustaceans::table.order(rustaceans::id.desc())
+            .load::<Rustacean>(c)
+            .expect("Error loading posts");
         json!(rustaceans)
     }).await
 }
 
 #[get("/rustaceans/<id>")]
-fn view_rustaceans(id : i32, _auth : BasicAuth) -> Value {
-    return json!([{"id" : id, "name" : "John Doe", "email": "john.doe@hotmali.fr"}]);
+async fn view_rustaceans(id : i32, _auth : BasicAuth, db : DbConn) -> Value {
+    db.run(move |c| {
+        let rustacean = rustaceans::table.find(id)
+            .get_result::<Rustacean>(c)
+            .expect("Error loading post");
+        json!(rustacean)
+    }).await
 }
 
-#[post("/rustaceans", format = "json")]
-fn add_rustaceans(_auth : BasicAuth) -> Value {
-    return json!({"id" : 3, "name" : "Toto Ro", "email": "toto.ro@hotmali.fr"});
+#[post("/rustaceans", format = "json", data = "<new_rustacean>")]
+async fn add_rustaceans(_auth : BasicAuth, db : DbConn, new_rustacean : Json<NewRustacean>) -> Value {
+    db.run(|c| {
+        let result =diesel::insert_into(rustaceans::table)
+            .values(new_rustacean.into_inner())
+            .execute(c)
+            .expect("Error saving new rustacean");
+        json!(result)
+    }).await
 }
-#[put("/rustaceans/<id>", format = "json")]
-fn update_rustaceans(id : i32, _auth : BasicAuth) -> Value {
-    return json!({"id" : id, "name" : "Toto Ro", "email": "toto.ro@hotmali.fr"});
+#[put("/rustaceans/<id>", format = "json", data = "<rustacean>")]
+async fn update_rustaceans(id : i32, _auth : BasicAuth, rustacean: Json<Rustacean>, db : DbConn) -> Value {
+    db.run( move |c| {
+        let result = diesel::update(rustaceans::table.find(id))
+            .set(
+                (rustaceans::name.eq(rustacean.name.to_owned()),
+                rustaceans::email.eq(rustacean.email.to_owned())
+                ))
+            .execute(c)
+            .expect("Error updating rustacean");
+        json!(result)
+    }).await
 }
 
-#[delete("/rustaceans/<_id>")]
-fn delete_rustaceans(_id : i32, _auth : BasicAuth) -> status::NoContent {
-    status::NoContent
+#[delete("/rustaceans/<id>")]
+async fn delete_rustaceans(id : i32, _auth : BasicAuth, db : DbConn) -> status::NoContent {
+    db.run( move |c| {
+        diesel::delete(rustaceans::table.find(id))
+            .execute(c)
+            .expect("Error deleting rustacean");
+        status::NoContent
+    }).await
 }
 
 #[catch(404)]
@@ -52,6 +80,12 @@ fn not_found() ->Value {
 fn unauthorized() -> Value {
     json!("Non autorisé")
 }
+
+#[catch(422)]
+fn unprocessable_entity() -> Value {
+    json!("Unprocessable Entity")
+}
+
 
 #[rocket::main]
 async fn main() {
@@ -65,7 +99,8 @@ async fn main() {
         ])
         .register("/", catchers![
             not_found,
-            unauthorized
+            unauthorized,
+            unprocessable_entity
         ])
         .attach(DbConn::fairing())
         .launch()
